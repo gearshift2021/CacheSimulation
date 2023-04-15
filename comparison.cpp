@@ -1,80 +1,156 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <vector>
-#include <cmath>
-#include <utility>
+#include <bitset>
+#include <string>  
 
 using namespace std;
 
-class CacheEntry {
-public:
+// Cache parameters
+ int CACHE_SIZE = 1024; // 1KB cache
+ int BLOCK_SIZE = 64; // 32-byte blocks
+ int NUM_SETS = CACHE_SIZE / (BLOCK_SIZE); // direct-mapped cache, so 1 set per block
+
+// Cache entry structure
+struct CacheEntry {
     int index;
-    int set;
     int tag;
     int counter;
-
-    CacheEntry(int i, int s, int t, int c) : index(i), set(s), tag(t), counter(c) {}
 };
 
-void simulateDirectMapped(vector<CacheEntry>& cache, unsigned int address, int blockSize, int numBlocks) {
-    int indexSize = log2(numBlocks);
-    int blockOffsetSize = log2(blockSize);
-    int tagSize = 32 - indexSize - blockOffsetSize;
+// Cache statistics
+int num_hits = 0;
+int num_accesses = 0;
 
-    unsigned int index = (address >> blockOffsetSize) & ((1 << indexSize) - 1);
-    unsigned int tag = (address >> (indexSize + blockOffsetSize)) & ((1 << tagSize) - 1);
+// Convert hex address to binary and extract tag, set, and offset
+void parse_address(string address, int& tag, int& set, int& offset) {
+    // Convert hex address to binary
+    bitset<32> bits(stoul(address, nullptr, 16));
 
-    CacheEntry& entry = cache[index];
-    if (entry.tag == tag) {
-        // Hit
-        entry.counter++;
-    } else {
-        // Miss
-        entry.tag = tag;
-        entry.counter = 1;
-    }
+    // Extract tag, set, and offset
+    tag = bits.to_ulong() / (BLOCK_SIZE * NUM_SETS);
+    set = (bits.to_ulong() / BLOCK_SIZE) % NUM_SETS;
+    offset = bits.to_ulong() % BLOCK_SIZE;
 }
 
-int main() {
-    int cacheSize = 512; // cache size in bytes
-    int blockSize = 8; // cache block size in bytes
-    int associativity = 1; // direct-mapped cache
+// Direct-mapped cache simulation
+void direct_mapped_cache_sim() {
+    // Initialize cache with empty entries
+    vector<CacheEntry> cache(NUM_SETS);
 
-    int numBlocks = cacheSize / (blockSize * associativity);
-    vector<CacheEntry> cache(numBlocks, CacheEntry(0, 0, 0, 0)); // numBlocks blocks, initially empty
+    // Open trace file
+    ifstream trace_file("gcc.trace");
 
-    int hits = 0;
-    int accesses = 0;
+    // Parse each line in trace file
+    string line;
+    while (getline(trace_file, line)) {
+        // Ignore first character (load vs store)
+        line = line.substr(1);
 
-    // Open the trace file for reading
-    ifstream traceFile("swim.trace");
-    if (!traceFile.is_open()) {
-        cerr << "Failed to open trace file." << endl;
-        return 1;
+        // Parse address
+        int tag, set, offset;
+        parse_address(line.substr(0, 8), tag, set, offset);
+
+        // Check cache for hit
+        if (cache[set].tag == tag) {
+            num_hits++;
+            cache[set].counter++;
+        }
+        else {
+            cache[set].tag = tag;
+            cache[set].counter = 1;
+        }
+
+        num_accesses++;
     }
 
-    string line;
-    while (getline(traceFile, line)) {
-        // Parse the address from the trace file
-        istringstream iss(line);
-        char op;
-        unsigned int address;
-        int size;
-        iss >> op >> hex >> address >> size;
+    // Calculate hit rate
+    float hit_rate = (float)num_hits / num_accesses;
 
-        // Ignore the operation and size, and simulate the access to the cache
-        simulateDirectMapped(cache, address, blockSize, numBlocks);
-        accesses++;
-        if (cache.back().counter > 1) {
-            hits++;
+    // Print cache statistics
+    cout << "Direct-mapped cache statistics:" << endl;
+    cout << "Cache size: " << CACHE_SIZE << endl;
+    cout << "Block size: " << BLOCK_SIZE << endl;
+    cout << "Number of sets: " << NUM_SETS << endl;
+    cout << "Number of accesses: " << num_accesses << endl;
+    cout << "Number of hits: " << num_hits << endl;
+    cout << "Hit rate: " << hit_rate << endl;
+}
+
+// Fully associative cache simulation
+void fully_associative_cache_sim() {
+    // Initialize cache with empty entries
+    vector<CacheEntry> cache(CACHE_SIZE);
+
+    // Open trace file
+    ifstream trace_file("gcc.trace");
+
+    // Parse each line in trace file
+    string line;
+    while (getline(trace_file, line)) {
+        // Ignore first character (load vs store)
+        line = line.substr(1);
+
+        // Parse address
+        int tag, set, offset;
+        parse_address(line.substr(0, 8), tag, set, offset);
+
+        // Check cache for hit
+        bool hit = false;
+        int lru_index = 0;
+        for (int i = 0; i < CACHE_SIZE; i++) {
+            if (cache[i].tag == tag) {
+                hit = true;
+                cache[i].counter++;
+                break;
+            }
+            if (cache[i].counter < cache[lru_index].counter) {
+                lru_index = i;
+            }
+        }
+
+        if (!hit) {
+            cache[lru_index].tag = tag;
+            cache[lru_index].counter = num_accesses;
+        }
+
+        num_accesses++;
+        if (hit) {
+            num_hits++;
         }
     }
 
-    // Output the hit rate and access count
-    double hitRate = (double)hits / accesses;
-    cout << "Hit rate: " << hitRate << endl;
-    cout << "Access count: " << accesses << endl;
+    // Calculate hit rate
+    float hit_rate = (float)num_hits / num_accesses;
+
+    // Print cache statistics
+    cout << "Fully associative cache statistics:" << endl;
+    cout << "Cache size: " << CACHE_SIZE << endl;
+    cout << "Block size: " << BLOCK_SIZE << endl;
+    cout << "Number of accesses: " << num_accesses << endl;
+    cout << "Number of hits: " << num_hits << endl;
+    cout << "Hit rate: " << hit_rate << endl;
+}
+
+
+
+
+
+
+
+int main() {
+    direct_mapped_cache_sim();
+    
+    // Reset cache statistics
+    num_hits = 0;
+    num_accesses = 0;
+
+    // Fully associative cache parameters
+    CACHE_SIZE = 1024; // 1KB cache
+    BLOCK_SIZE = 64; // 32-byte blocks
+    NUM_SETS = 1; // fully associative cache, so only 1 set
+
+    fully_associative_cache_sim();
 
     return 0;
 }
